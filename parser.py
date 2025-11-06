@@ -1,4 +1,3 @@
-# parser.py
 from lexer import tokenize
 
 class ASTNode:
@@ -17,11 +16,19 @@ class Print(ASTNode):
         return f'Print({self.expr})'
 
 class Assign(ASTNode):
+    def __init__(self, target, expr):
+        # target may be a Var(name) or Index(array_expr, index_expr)
+        self.target = target
+        self.expr = expr
+    def __repr__(self):
+        return f'Assign({self.target}, {self.expr})'
+
+class Let(ASTNode):
     def __init__(self, name, expr):
         self.name = name
         self.expr = expr
     def __repr__(self):
-        return f'Assign({self.name}, {self.expr})'
+        return f'Let({self.name}, {self.expr})'
 
 class If(ASTNode):
     def __init__(self, cond, then_block, else_block=None):
@@ -37,6 +44,15 @@ class While(ASTNode):
         self.body = body
     def __repr__(self):
         return f'While({self.cond}, body={self.body})'
+
+class ForLoop(ASTNode):
+    def __init__(self, var, start, end, body):
+        self.var = var
+        self.start = start
+        self.end = end
+        self.body = body
+    def __repr__(self):
+        return f"ForLoop({self.var}, {self.start}, {self.end}, {self.body})"
 
 class BinOp(ASTNode):
     def __init__(self, left, op, right):
@@ -64,9 +80,23 @@ class Var(ASTNode):
     def __repr__(self):
         return f'Var({self.name})'
 
+class ArrayLiteral(ASTNode):
+    def __init__(self, elements):
+        self.elements = elements
+    def __repr__(self):
+        return f'Array({self.elements})'
+
+class Index(ASTNode):
+    def __init__(self, array_expr, index_expr):
+        self.array = array_expr
+        self.index = index_expr
+    def __repr__(self):
+        return f'Index({self.array}, {self.index})'
+
+
 class Parser:
     def __init__(self, tokens):
-        # filter out NEWLINE tokens for simplicity in this parser
+        # Remove NEWLINEs for simpler parsing
         self.tokens = [t for t in tokens if t[0] != 'NEWLINE']
         self.pos = 0
 
@@ -92,64 +122,138 @@ class Parser:
 
     def statement(self):
         tok = self.peek()
+
         if tok[0] == 'PRINT':
             self.next()
             expr = self.expr()
             return Print(expr)
+
         elif tok[0] == 'ID':
             name = self.next()[1]
-            if self.peek()[0] == 'ASSIGN':
+            # Check for array indexing
+            if self.peek()[0] == 'LBRACK':
                 self.next()
-                expr = self.expr()
-                return Assign(name, expr)
+                idx = self.expr()
+                self.expect('RBRACK')
+                target = Index(Var(name), idx)
             else:
-                raise SyntaxError(f'Expected = after identifier at {tok[2]}:{tok[3]}')
+                target = Var(name)
+            self.expect('ASSIGN')
+            expr = self.expr()
+            return Assign(target, expr)
+
+        elif tok[0] == 'LET':
+            self.next()
+            id_tok = self.expect('ID')
+            self.expect('ASSIGN')
+            expr = self.expr()
+            return Let(id_tok[1], expr)
+
         elif tok[0] == 'IF':
             self.next()
             cond = self.expr()
             self.expect('THEN')
             then_block = []
-            # parse until ELSE or EOF (note: simple block handling)
-            while self.peek()[0] not in ('ELSE', 'EOF'):
+            while self.peek()[0] not in ('ELSE', 'END', 'EOF'):
                 then_block.append(self.statement())
+
             else_block = None
             if self.peek()[0] == 'ELSE':
                 self.next()
                 else_block = []
-                while self.peek()[0] != 'EOF':
+                while self.peek()[0] not in ('END', 'EOF'):
                     else_block.append(self.statement())
+
+            if self.peek()[0] == 'END':
+                self.next()
             return If(cond, then_block, else_block)
+
         elif tok[0] == 'WHILE':
             self.next()
             cond = self.expr()
+            self.expect('THEN')
             body = []
-            while self.peek()[0] != 'EOF':
+            while self.peek()[0] not in ('END', 'EOF'):
                 body.append(self.statement())
+            if self.peek()[0] == 'END':
+                self.next()
             return While(cond, body)
-        elif tok[0] == 'LET':
-            # LET <ID> = <expr>
-            self.next()  # consume LET
-            id_tok = self.expect('ID')
+
+        elif tok[0] == 'FOR':
+            # साठी i = start ते end तर
+            self.next()
+            var_name = self.expect('ID')[1]
             self.expect('ASSIGN')
-            expr = self.expr()
-            return ('let', id_tok[1], expr)
+            start_expr = self.expr()
+            self.expect('TO')
+            end_expr = self.expr()
+            self.expect('THEN')
+
+            body = []
+            while self.peek()[0] not in ('END', 'EOF'):
+                body.append(self.statement())
+            if self.peek()[0] == 'END':
+                self.next()
+            return ForLoop(var_name, start_expr, end_expr, body)
+
         else:
             raise SyntaxError(f'Unknown statement starting with {tok[0]} at {tok[2]}')
-        
 
-    # expression: handles +, -, == (left associative)
+    # ---------- EXPRESSION PARSING ----------
+
     def expr(self):
-        node = self.term()
-        while self.peek()[0] in ('PLUS', 'MINUS', 'EQ'):
+        return self.parse_or()
+
+    def parse_or(self):
+        node = self.parse_and()
+        while self.peek()[0] == 'OR':
+            self.next()
+            right = self.parse_and()
+            node = BinOp(node, 'OR', right)
+        return node
+
+    def parse_and(self):
+        node = self.parse_not()
+        while self.peek()[0] == 'AND':
+            self.next()
+            right = self.parse_not()
+            node = BinOp(node, 'AND', right)
+        return node
+
+    def parse_not(self):
+        if self.peek()[0] == 'NOT':
+            self.next()
+            operand = self.parse_comparison()
+            return BinOp(Num(0), 'EQ', operand)
+        return self.parse_comparison()
+
+    def parse_comparison(self):
+        node = self.parse_addsub()
+        while self.peek()[0] in ('EQ', 'NE', 'LT', 'GT', 'LE', 'GE'):
             op = self.next()[0]
-            right = self.term()
+            right = self.parse_addsub()
             node = BinOp(node, op, right)
         return node
 
-    # term: handles * and /
-    def term(self):
+    def parse_addsub(self):
+        node = self.parse_muldivmod()
+        while self.peek()[0] in ('PLUS', 'MINUS'):
+            op = self.next()[0]
+            right = self.parse_muldivmod()
+            node = BinOp(node, op, right)
+        return node
+
+    def parse_muldivmod(self):
+        node = self.parse_power()
+        while self.peek()[0] in ('MUL', 'DIV', 'MOD'):
+            op = self.next()[0]
+            right = self.parse_power()
+            node = BinOp(node, op, right)
+        return node
+
+    def parse_power(self):
         node = self.factor()
-        while self.peek()[0] in ('MUL', 'DIV'):
+        while self.peek()[0] == 'POW':
             op = self.next()[0]
             right = self.factor()
             node = BinOp(node, op, right)
@@ -164,13 +268,29 @@ class Parser:
             self.next()
             return Str(tok[1])
         if tok[0] == 'ID':
-            self.next()
-            return Var(tok[1])
+            name = self.next()[1]
+            node = Var(name)
+            if self.peek()[0] == 'LBRACK':
+                self.next()
+                idx = self.expr()
+                self.expect('RBRACK')
+                node = Index(node, idx)
+            return node
         if tok[0] == 'LPAREN':
             self.next()
             node = self.expr()
             self.expect('RPAREN')
             return node
+        if tok[0] == 'LBRACK':
+            self.next()
+            elems = []
+            if self.peek()[0] != 'RBRACK':
+                elems.append(self.expr())
+                while self.peek()[0] == 'COMMA':
+                    self.next()
+                    elems.append(self.expr())
+            self.expect('RBRACK')
+            return ArrayLiteral(elems)
         raise SyntaxError(f'Unexpected token in factor: {tok[0]} at {tok[2]}:{tok[3]}')
 
 def parse_code(code):
@@ -178,8 +298,7 @@ def parse_code(code):
     p = Parser(toks + [('EOF', '', 0, 0)])
     return p.parse()
 
-# quick self-test
 if __name__ == '__main__':
-    s = 'बदलवा a = 5\nलिहा a\n'
+    s = 'बदलवा a = [1,2,3]\nलिहा a[1]\n'
     ast = parse_code(s)
     print(ast)

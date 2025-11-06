@@ -1,17 +1,26 @@
-# lexer.py
 import re
 
 # Token specification (order matters: longer first)
 TOKEN_SPEC = [
-    ('COMMENT',   r'\#.*'),           # <-- add this line to skip comments
+    ('COMMENT',   r'\#.*'),
     ('STRING',    r'"[^"\n]*"'),
     ('NUMBER',    r'\d+'),
     ('EQ',        r'=='),
+    ('NE',        r'!='),
+    ('LE',        r'<='),
+    ('GE',        r'>='),
+    ('LT',        r'<'),
+    ('GT',        r'>'),
     ('ASSIGN',    r'='),
     ('PLUS',      r'\+'),
     ('MINUS',     r'-'),
     ('MUL',       r'\*'),
     ('DIV',       r'/'),
+    ('MOD',       r'%'),
+    ('POW',       r'\^'),
+    ('LBRACK',    r'\['),
+    ('RBRACK',    r'\]'),
+    ('COMMA',     r','),
     ('LPAREN',    r'\('),
     ('RPAREN',    r'\)'),
     ('NEWLINE',   r'\n'),
@@ -20,14 +29,21 @@ TOKEN_SPEC = [
     ('MISMATCH',  r'.'),
 ]
 
-# Map some Marathi keywords (Devanagari) to token types
+
+# Map Marathi keywords (Devanagari) to token types
 KEYWORDS = {
     'जर': 'IF',
     'तर': 'THEN',
     'नाहीतर': 'ELSE',
-    'पर्यंत': 'WHILE',
+    'जोपर्यंत': 'WHILE',
+    'साठी': 'FOR', 
     'लिहा': 'PRINT',
-    'बदलवा': 'LET',  # example declaration keyword
+    'बदलवा': 'LET',
+    'आणि': 'AND',
+    'किंवा': 'OR',
+    'नाही': 'NOT',
+    'संपले': 'END',
+    'ते': 'TO',
 }
 
 master_pat = re.compile('|'.join('(?P<%s>%s)' % pair for pair in TOKEN_SPEC))
@@ -53,16 +69,13 @@ def tokenize(code):
             lineno += 1
             line_start = mo.end()
             yield ('NEWLINE', '\n', lineno-1, column)
-        elif kind == 'SKIP':
-            continue
-        elif kind == 'COMMENT':
+        elif kind == 'SKIP' or kind == 'COMMENT':
             continue
         elif kind == 'MISMATCH':
             raise SyntaxError(f'Unexpected character {value!r} at line {lineno} col {column}')
         else:
             yield (kind, value, lineno, column)
 
-# small self-test when run
 if __name__ == '__main__':
     sample = 'बदलवा a = 5\nलिहा "नमस्कार"\n'
     for t in tokenize(sample):
