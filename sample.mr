@@ -1,0 +1,16 @@
+# sample.mr (example Marathi-like source)
+
+# declaration (we use ASCII digits in this simple version)
+बदलवा a = 5
+बदलवा b = 3
+
+जर a == b तर
+    लिहा "बराबर"
+नाहीतर
+    लिहा "वेगळं"
+
+# arithmetic example
+a = 10
+b = 20
+लिहा a
+लिहा b
